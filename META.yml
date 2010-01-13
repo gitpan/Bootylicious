@@ -1,6 +1,6 @@
 --- #YAML:1.0
-name:               bootylicious
-version:            0.900101
+name:               Bootylicious
+version:            0.910101
 abstract:           Blog software
 author:
     - Viacheslav Tykhanovskyi <vti@cpan.org>
@@ -11,7 +11,7 @@ build_requires:  {}
 requires:
     File::Basename:     0
     FindBin:            0
-    Mojo:               0.99991
+    Mojo:               0.999914
     perl:               5.008001
     Pod::Simple::HTML:  0
     Time::Local:        0

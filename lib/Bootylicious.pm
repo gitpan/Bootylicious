@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+package Bootylicious;
 
 BEGIN { use FindBin; use lib "$FindBin::Bin/mojo/lib" }
 
@@ -19,9 +19,10 @@ $ENV{LANG} = 'C';
 require Time::Piece;
 require Time::Local;
 
-our $VERSION = '0.900101';
+our $VERSION = '0.910101';
 
 my %config = (
+    perl5lib => '',
     loglevel => 'debug',
     server   => 'cgi',
     author   => $ENV{BOOTYLICIOUS_AUTHOR}
@@ -43,7 +44,7 @@ my %config = (
     publicdir => $ENV{BOOTYLICIOUS_PUBLICDIR}
       || 'public',
     templatesdir => $ENV{BOOTYLICIOUS_TEMPLATESDIR}
-      || undef,    # defaults to 'templates'
+      || 'templates',
     footer => $ENV{BOOTYLICIOUS_FOOTER}
       || 'Powered by <a href="http://getbootylicious.org">Bootylicious</a>',
     menu => [
@@ -59,25 +60,21 @@ my %config = (
     css       => [],
     js        => [],
     datefmt   => '%a, %d %b %Y',
-    strings => {
-        'archive' => 'Archive',
+    strings   => {
+        'archive'             => 'Archive',
         'archive-description' => 'Articles index',
-        'tags'    => 'Tags',
-        'tags-description' => 'Tags overview',
-        'tag'     => 'Tag',
-        'tag-description' => 'Articles with tag [_1]',
-        'draft' => 'Draft',
-        'permalink-to' => 'Permalink to',
-        'not-found' => 'The page you are looking for was not found',
-        'error'   => 'Internal error occuried :('
+        'tags'                => 'Tags',
+        'tags-description'    => 'Tags overview',
+        'tag'                 => 'Tag',
+        'tag-description'     => 'Articles with tag [_1]',
+        'draft'               => 'Draft',
+        'permalink-to'        => 'Permalink to',
+        'later'               => 'Later',
+        'earlier'             => 'Earlier',
+        'not-found'           => 'The page you are looking for was not found',
+        'error'               => 'Internal error occuried :('
     },
     template_handler => 'ep'
-);
-
-my %hooks = (
-    preinit  => [],
-    init     => [],
-    finalize => []
 );
 
 if ($ARGV[0] && $ARGV[0] eq 'inflate') {
@@ -93,6 +90,8 @@ if ($ARGV[0] && $ARGV[0] eq 'inflate') {
         article.html
         page.html
         draft.html
+        not_found.html
+        exception.html
         layouts/wrapper.html
         |
       )
@@ -125,6 +124,9 @@ app->renderer->add_helper(config => sub { shift; config(@_) });
 app->renderer->add_helper(date => \&date);
 app->renderer->add_helper(date_rss => \&date_rss);
 
+# Helpers for plugins
+app->renderer->add_helper(get_articles => sub { shift; get_articles(@_) });
+
 app->renderer->add_helper(
     strings => sub {
         my $c = shift;
@@ -139,9 +141,18 @@ app->renderer->add_helper(
     }
 );
 
-_load_plugins($config{plugins});
+app->plugins->add_hook(
+    before_dispatch => sub {
+        my ($self, $c) = @_;
 
-_call_hook(app, 'preinit');
+        # Make the tests happy
+        $c->stash(template_class => __PACKAGE__);
+
+        $c->stash($_ => '') for (qw/title description/);
+    }
+);
+
+_load_plugins($config{plugins});
 
 sub config {
     if (@_) {
@@ -153,6 +164,25 @@ sub config {
     return \%config;
 }
 
+ladder sub {
+    my $self = shift;
+
+    return 1 if $self->stash->{format};
+
+    return 1 unless $self->req->url;
+
+    return 1 if $self->req->url =~ m{/$};
+
+    my $canonical_location = $self->req->url->to_abs . '.html';
+
+    $self->app->log->debug("Path is not canonical: " . $self->req->url);
+    $self->app->log->debug("Redirecting to: " . $canonical_location);
+
+    $self->redirect_to($canonical_location);
+
+    return 0;
+};
+
 sub index {
     my $c = shift;
 
@@ -162,10 +192,12 @@ sub index {
     my ($articles, $pager) =
       get_articles(limit => $config{pagelimit}, timestamp => $timestamp);
 
-    my $last_modified;
+    my $last_created  = time;
+    my $last_modified = time;
     if (@$articles) {
         $article = $articles->[0];
 
+        $last_created  = $articles->[0]->{created};
         $last_modified = $article->{modified};
 
         return 1 unless _is_modified($c, $last_modified);
@@ -183,12 +215,17 @@ sub index {
 
     $c->stash(template => 'index');
 
-    $c->stash(layout => 'wrapper', title => '')
-      unless $c->stash('format') && $c->stash('format') eq 'rss';
+    if ($c->stash('format') && $c->stash('format') eq 'rss') {
+        $c->stash(
+            last_created  => $last_created,
+            last_modified => $last_modified,
+        );
+    }
+    else {
+        $c->stash(layout => 'wrapper', title => '');
+    }
 
     $c->render;
-
-    _call_hook($c, 'finalize');
 }
 
 get '/' => \&index => 'root';
@@ -217,8 +254,6 @@ get '/archive' => sub {
     );
 
     $c->render;
-
-    _call_hook($c, 'finalize');
 } => 'archive';
 
 get '/tags/:tag' => sub {
@@ -241,27 +276,27 @@ get '/tags/:tag' => sub {
         return 1;
     }
 
-    my $last_modified = Mojo::Date->new;
-    if (@$articles) {
-        $last_modified = $articles->[0]->{modified};
-
-        return 1 unless _is_modified($c, $last_modified);
-    }
-
-    $c->stash(articles => $articles, last_modified => $last_modified);
-
-    $c->stash(layout => 'wrapper')
-      unless $c->stash('format') && $c->stash('format') eq 'rss';
+    my $last_modified = $articles->[0]->{modified};
+    return 1 unless _is_modified($c, $last_modified);
 
     $c->res->headers->header('Last-Modified' => Mojo::Date->new($last_modified));
 
+    my $last_created = $articles->[0]->{created};
+
+    $c->stash(articles => $articles);
+
     if ($c->stash('format') && $c->stash('format') eq 'rss') {
-        $c->stash(template => 'index');
+        $c->stash(
+            last_modified => $last_modified,
+            last_created  => $last_created,
+            template      => 'index'
+        );
+    }
+    else {
+        $c->stash(layout => 'wrapper');
     }
 
     $c->render;
-
-    _call_hook($c, 'finalize');
 } => 'tag';
 
 get '/tags' => sub {
@@ -272,8 +307,6 @@ get '/tags' => sub {
     $c->stash(layout => 'wrapper',  tags => $tags);
 
     $c->render;
-
-    _call_hook($c, 'finalize');
 } => 'tags';
 
 get '/articles/:year/:month/:alias' => sub {
@@ -284,6 +317,7 @@ get '/articles/:year/:month/:alias' => sub {
 
     my ($article, $pager) = get_article($articleid);
     unless ($article) {
+        $c->app->log->debug("Article '$articleid' not found");
         $c->stash(rendered => 1);
         $c->app->static->serve_404($c);
         return 1;
@@ -297,8 +331,6 @@ get '/articles/:year/:month/:alias' => sub {
         'Last-Modified' => Mojo::Date->new($article->{modified}));
 
     $c->render;
-
-    _call_hook($c, 'finalize');
 } => 'article';
 
 get '/pages/:pageid' => sub {
@@ -321,8 +353,6 @@ get '/pages/:pageid' => sub {
         'Last-Modified' => Mojo::Date->new($page->{modified}));
 
     $c->render;
-
-    _call_hook($c, 'finalize');
 } => 'page';
 
 get '/drafts/:draftid' => sub {
@@ -345,8 +375,6 @@ get '/drafts/:draftid' => sub {
         'Last-Modified' => Mojo::Date->new($draft->{modified}));
 
     $c->render;
-
-    _call_hook($c, 'finalize');
 } => 'draft';
 
 sub theme {
@@ -393,7 +421,7 @@ sub _read_config_from_file {
         app->log->debug("Configuration is not available.");
     }
 
-    $ENV{SCRIPT_NAME} = $config{base} if $config{base};
+    $ENV{SCRIPT_NAME} = $config{base} if defined $config{base};
 
     # set proper templates base dir, if defined
     app->renderer->root(app->home->rel_dir($config{templatesdir}))
@@ -424,55 +452,10 @@ sub _load_plugins {
         }
     }
 
+    push @{app->plugins->namespaces}, 'Bootylicious::Plugin';
     foreach my $plugin (@plugins) {
-        _load_plugin($plugin->{name} => $plugin->{args});
+        plugin($plugin->{name} => $plugin->{args});
     }
-}
-
-sub _load_plugin {
-    my ($class, $args) = @_;
-
-    my $loader = Mojo::Loader->new;
-
-    $class = Mojo::ByteStream->new($class)->camelize;
-    $class = "Bootylicious::Plugin::$class";
-
-    app->log->debug("Loading plugin '$class'");
-
-    if (my $e = $loader->load($class)) {
-        if (ref $e) {
-            app->log->error($e);
-        }
-        else {
-            app->log->error("Plugin not found: $class");
-        }
-
-        return;
-    }
-
-    unless ($class->can('new')) {
-        app->log->error(qq|Can't locate object method "new" via plugin '$class'|);
-        return;
-    }
-
-    $args ||= {};
-    my $instance = $class->new(%$args);
-
-    foreach my $hook (keys %hooks) {
-        next unless $class->can("hook_$hook");
-
-        app->log->debug("Registering hook '$class\::hook_$hook'");
-
-        push @{$hooks{$hook}}, $instance;
-    }
-}
-
-sub _call_hook {
-    my $c = shift;
-    my $hook = shift;
-
-    my $method = "hook_$hook";
-    $_->$method($c) foreach @{$hooks{$hook}};
 }
 
 sub _is_modified {
@@ -574,7 +557,7 @@ sub get_article {
       ? $config{articlesdir}
       : app->home->rel_dir($config{articlesdir});
 
-    my $timestamp_re = qr/^$year$month\d\dT.*?-$alias\./;
+    my $timestamp_re = qr/^$year$month\d\d(T.*?)?-$alias\./;
 
     my @files = sort { $b cmp $a } glob($root . '/*.*');
 
@@ -954,11 +937,9 @@ sub _parse_article_pod {
     };
 }
 
-_call_hook(app, 'init');
-
 theme if $config{'theme'};
 
-shagadelic(@ARGV ? @ARGV : $config{'server'});
+1;
 
 __DATA__
 
@@ -1003,16 +984,16 @@ __DATA__
 % }
     <div id="pager">
 % if ($pager->{prev}) {
-        &larr; <a href="<%= url pager => $pager->{prev} %>">Later</a>
+        &larr; <a href="<%= url pager => $pager->{prev} %>"><%= strings 'later' %></a>
 % }
 % else {
-        <span class="notactive">&larr; Later</span>
+        <span class="notactive">&larr; <%= strings 'later' %></span>
 % }
 % if ($pager->{next}) {
-        <a href="<%= url pager => $pager->{next} %>">Earlier</a> &rarr;
+        <a href="<%= url pager => $pager->{next} %>"><%= strings 'earlier' %></a> &rarr;
 % }
 % else {
-        <span class="notactive">Earlier &rarr;</span>
+        <span class="notactive"><%= strings 'earlier' %> &rarr;</span>
 % }
     </div>
 
@@ -1027,7 +1008,7 @@ __DATA__
     <br />
 % foreach my $article (@$articles) {
 %     if (!$tmp || $article->{year} ne $tmp->{year}) {
-    <%= "</ul>" if $tmp %>
+    <%== "</ul>" if $tmp %>
     <b><%= $article->{year} %></b>
     <ul>
 %     }
@@ -1052,8 +1033,8 @@ __DATA__
         <title><%= config 'title' %></title>
         <link><%= url_abs 'root' %></link>
         <description><%= config 'descr' %></description>
-        <pubDate><%= date_rss $article->{created} %></pubDate>
-        <lastBuildDate><%= date_rss $article->{created} %></lastBuildDate>
+        <pubDate><%= date_rss $last_created %></pubDate>
+        <lastBuildDate><%= date_rss $last_created %></lastBuildDate>
         <generator>Mojolicious::Lite</generator>
 % foreach my $article (@$articles) {
 % my $link = url_abs(article => $article);
@@ -1175,6 +1156,22 @@ rkJggg==" alt="RSS" /></a></sup>
 </div>
 
 
+@@ not_found.html.ep
+% stash title => 'Not found', description => 'Not found', layout => 'wrapper';
+<div class="error">
+<h1>404</h1>
+<br />
+<%= strings 'not-found' %>
+</div>
+
+@@ exception.html.ep
+% stash title => 'Not found', description => 'Not found', layout => 'wrapper';
+<div class="error">
+<h1>500</h1>
+<br />
+<%= strings 'error' %>
+</div>
+
 @@ layouts/wrapper.html.ep
 %# $c->res->headers->content_type('text/html; charset=utf-8');
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
@@ -1259,7 +1256,7 @@ rkJggg==" alt="RSS" /></a></sup>
                 </div>
             </div>
             <div id="content">
-            <%== $inner_template %>
+            <%= content %>
             </div>
             <div class="push"></div>
         </div>
@@ -1270,22 +1267,6 @@ rkJggg==" alt="RSS" /></a></sup>
     </body>
 </html>
 
-@@ not_found.html.ep
-% stash title => 'Not found', layout => 'wrapper';
-<div class="error">
-<h1>404</h1>
-<br />
-<%= strings 'not-found' %>
-</div>
-
-@@ exception.html.ep
-% stash title => 'Not found', layout => 'wrapper';
-<div class="error">
-<h1>500</h1>
-<br />
-<%= strings 'error' %>
-</div>
-
 __END__
 
 =head1 NAME
@@ -1294,7 +1275,7 @@ Bootylicious -- one-file blog on Mojo steroids!
 
 =head1 SYNOPSIS
 
-    $ perl bootylicious daemon
+    $ bootylicious daemon
 
 =head1 DESCRIPTION
 
@@ -1408,7 +1389,10 @@ Default is 'pages'.
 =item * draftsdir - set the dir where bootylicious looks for draft pages.
 Default is 'drafts'.
 
-=item * cuttag - set the cuttag for parsing the articles. Default is "cut".
+=item * cuttag - set the cuttag for parsing the articles. Default is "[cut]".
+
+=item * cuttext - set the link to full article view for articles with a cuttag.
+Default is 'Keep reading'.
 
 =item * perl5lib - set any additional lib folders the script should look
 into before trying to load Perl 5 modules (ideal for integrating with
@@ -1512,12 +1496,13 @@ L<Bootylicious::Parser::Md> for a complete example.
 
 =head1 PLUGINS
 
-Bootylicious can be extended by third party plugins.
+Bootylicious can be extended by using L<Mojolicious::Plugin> derived third party
+plugins.
 
 =head2 CONFIGURATION
 
-Configuration is done in bootylicious config file. Parameters are passed to the
-plugins constructors.
+Configuration is done in bootylicious config file. Parameters are passed when
+loading a plugin.
 
     # Without params (or with default ones)
     "plugins" : [
@@ -1535,70 +1520,8 @@ plugins constructors.
         }
     ]
 
-=head2 HOOKS
-
-There are several hooks where you can hook your plugin to. This includes:
-
-=over
-
-=item * preinit
-
-    Called before any bootylicious setup is made. This can be used if you want
-    to modify bootylicious heavily.
-
-=item * init
-
-    Called after all bootylicous setup is made. This can be used if you want to
-    add additional links (see L<Bootylicious::Plugin::Search>).
-
-=item * finalize
-
-    Called after any page is rendered. This can be used if you want to
-    substitute any part of the page after it is processed by the parser.
-
-=back
-
-If you need more hooks in different places feel free to contact me.
-
-=head2 INTERFACE
-
-    package Bootylicious::Plugin::MyNewPlugin;
-
-    use strict;
-    use warnings;
-
-    use base 'Mojo::Base';
-
-    # Any parameters that are passed from the configuration file
-    __PACKAGE__->attr('before_context' => 20);
-
-    # Hook you want to use
-    sub hook_init {
-        my $self = shift;
-        my $app  = shift;
-
-        my $r = $app->routes;
-
-        $r->route('/search')->to(
-            callback => sub {
-                my $c = shift;
-
-                $c->stash(
-                    config         => config(),
-                    format         => 'html',
-                    template_class => __PACKAGE__,
-                );
-            }
-        )->name('search');
-    }
-
-    1;
-
-    @@ search.html.ep
-    % my $self = shift;
-        ...
-    Anything you can do with Mojo::Template goes here
-        ...
+See L<Mojolicious::Plugin> documentation for more details and
+L<Bootylicious::Plugin::Search> as an example plugin.
 
 =head1 TEMPLATES
 

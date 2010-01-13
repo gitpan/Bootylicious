@@ -3,60 +3,32 @@
 use strict;
 use warnings;
 
-use Test::More tests => 7;
+use Test::More tests => 20;
+use Test::Mojo;
 
-use Mojo::Client;
+BEGIN { require FindBin; $ENV{BOOTYLICIOUS_HOME} = "$FindBin::Bin/../"; }
 
-use FindBin;
-require "$FindBin::Bin/../bootylicious";
+use Bootylicious;
 
-my $app = app();
-$app->log->level('fatal');
+my $app = Bootylicious::app;
+$app->log->level('error');
 
-my $client = Mojo::Client->new->app($app);
+my $t = Test::Mojo->new;
 
 # Index page
-$client->get(
-    '/' => sub {
-        my ($self, $tx) = @_;
-
-        is($tx->res->code, 200);
-    }
-)->process;
-
-$client->get(
-    '/index' => sub {
-        my ($self, $tx) = @_;
-
-        is($tx->res->code, 200);
-    }
-)->process;
+$t->get_ok('/')->status_is(200)->content_like(qr/booty/);
+$t->get_ok('/index')->status_is(302);
+$t->get_ok('/index.html')->status_is(200)->content_like(qr/booty/);
 
 # Index rss page
-$client->get(
-    '/index.rss' => sub {
-        my ($self, $tx) = @_;
-
-        is($tx->res->code, 200);
-    }
-)->process;
+$t->get_ok('/index.rss')->status_is(200)->content_like(qr/rss/);
 
 # Archive page
-$client->get(
-    '/archive' => sub {
-        my ($self, $tx) = @_;
-
-        is($tx->res->code, 200);
-        like($tx->res->body, qr/Archive/);
-    }
-)->process;
+$t->get_ok('/archive.html')->status_is(200)->content_like(qr/Archive/);
 
 # Tags page
-$client->get(
-    '/tags' => sub {
-        my ($self, $tx) = @_;
+$t->get_ok('/tags.html')->status_is(200)->content_like(qr/Tags/);
 
-        is($tx->res->code, 200);
-        like($tx->res->body, qr/Tags/);
-    }
-)->process;
+# 404
+$t->get_ok('/foo.html')->status_is(404)
+  ->content_like(qr/The page you are looking for was not found/);
