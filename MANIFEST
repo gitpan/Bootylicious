@@ -1,10 +1,8 @@
-Bootylicious-0.910101.tar.gz
+bootylicious
 Changes
-lib/Bootylicious.pm
 Makefile.PL
 MANIFEST			This list of files
 MANIFEST.SKIP
-squash
 t/app.t
 t/paging.t
 META.yml                                 Module meta-data (added by MakeMaker)

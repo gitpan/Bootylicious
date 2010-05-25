@@ -5,7 +5,7 @@
 ^\.git
 mojo
 ^.perltidyrc$
-.conf$
+.json$
 ^articles\/
 .bak$
-bootylicious
+.tar.gz$
