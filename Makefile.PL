@@ -1,4 +1,4 @@
-# Copyright (C) 2009, Viacheslav Tykhanovskyi
+# Copyright (C) 2009-2010, Viacheslav Tykhanovskyi
 
 use 5.008001;
 
@@ -22,7 +22,6 @@ WriteMakefile(
         : ( META_MERGE => {
                 requires  => {perl => '5.008001'},
                 resources => {
-                    homepage => 'http://getbootylicious.org',
                     license  => 'http://dev.perl.org/licenses/',
                     repository =>
                       'http://github.com/vti/bootylicious/tree/master'
@@ -38,12 +37,14 @@ WriteMakefile(
 
     EXE_FILES => ['bootylicious'],
     PREREQ_PM => {
-        'File::Basename'    => 0,
-        'FindBin'           => 0,
-        'Mojo'              => 0.999914,
-        'Pod::Simple::HTML' => 0,
-        'Time::Local'       => 0,
-        'Time::Piece'       => 0,
+        'Carp'                               => 0,
+        'File::Basename'                     => 0,
+        'File::stat'                         => 0,
+        'FindBin'                            => 0,
+        'Mojolicious'                        => 5.0,
+        'MojoX::Validator'                   => 0,
+        'Time::Local'                        => 0,
+        'Time::Piece'                        => 0,
     },
     test => {TESTS => 't/*.t t/*/*.t t/*/*/*.t t/*/*/*/*.t'}
 );
