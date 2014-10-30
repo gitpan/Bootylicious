@@ -1,5 +1,6 @@
 bootylicious
 Changes
+lib/Bootylicious.pm
 lib/Bootylicious/Admin.pm
 lib/Bootylicious/Article.pm
 lib/Bootylicious/ArticleArchive.pm
