@@ -82,8 +82,7 @@ t/model/documents/20100404-hello.md.comment-1
 t/model/documents/20100404-hello.md.pingbacks
 t/model/documents/20100404-last.pod
 t/model/documents/20100505-hello.md
-t/model/documents/20100601-привет.md
-t/model/documents/20101010T12:13:14-foo-bar-baz.pod
+t/model/documents/20101010T121314-foo-bar-baz.pod
 t/model/documents/junk
 t/model/file-iterator-loader.t
 t/model/finder/20100101-foo.pod
@@ -103,7 +102,6 @@ t/model/pingback-iterator-finder/20101010-foo.md.pingbacks
 t/model/pingback-iterator.t
 t/model/pingback-iterator/20101010-empty.md.pingbacks
 t/model/pingback-iterator/20101010-foo.md.pingbacks
-t/model/pingback-iterator/20101010-привет.pod.pingbacks
 t/model/pingback.t
 t/model/tag-cloud.t
 t/model/tags/20101010-foo.pod
